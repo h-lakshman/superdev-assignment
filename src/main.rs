@@ -1,6 +1,7 @@
 use std::str::FromStr;
 
 use actix_web::{App, HttpResponse, HttpServer, Responder, post, web};
+use base64::prelude::*;
 use serde::{Deserialize, Serialize};
 use solana_sdk::{pubkey::Pubkey, signature::Keypair, signer::Signer};
 use spl_token::{ID as TOKEN_PROGRAM_ID, instruction as token_instruction};
@@ -18,8 +19,9 @@ async fn main() -> std::io::Result<()> {
             .service(generate_keypair)
             .service(create_token)
             .service(mint_to_token)
+            .service(sign_message)
     })
-    .bind(("127.0.0.1", port))?
+    .bind(("0.0.0.0", port))?
     .run()
     .await
 }
@@ -93,7 +95,7 @@ async fn create_token(token_details: web::Json<CreateTokenBody>) -> impl Respond
         })
         .collect();
 
-    let instruction_data = base64::encode(&instruction.data);
+    let instruction_data = base64::prelude::BASE64_STANDARD.encode(&instruction.data);
 
     HttpResponse::Ok().json(serde_json::json!({
         "success": true,
@@ -172,7 +174,7 @@ async fn mint_to_token(mint_to_details: web::Json<MintTokenBody>) -> impl Respon
         })
         .collect();
 
-    let instruction_data = base64::encode(&instruction.data);
+    let instruction_data = base64::prelude::BASE64_STANDARD.encode(&instruction.data);
 
     HttpResponse::Ok().json(serde_json::json!({
         "success": true,
@@ -180,6 +182,48 @@ async fn mint_to_token(mint_to_details: web::Json<MintTokenBody>) -> impl Respon
             "program_id": instruction.program_id.to_string(),
             "accounts": accounts,
             "instruction_data": instruction_data
+        }
+    }))
+}
+
+#[derive(Deserialize)]
+struct SignMessageBody {
+    message: String,
+    secret: String,
+}
+
+#[post("/message/sign")]
+async fn sign_message(sign_details: web::Json<SignMessageBody>) -> impl Responder {
+    if sign_details.message.is_empty() || sign_details.secret.is_empty() {
+        return HttpResponse::BadRequest().json(serde_json::json!({
+            "success": false,
+            "error": "Missing required fields"
+        }));
+    }
+
+    let keypair =
+        match std::panic::catch_unwind(|| Keypair::from_base58_string(&sign_details.secret)) {
+            Ok(kp) => kp,
+            Err(_) => {
+                return HttpResponse::BadRequest().json(serde_json::json!({
+                    "success": false,
+                    "error": "Invalid secret key format"
+                }));
+            }
+        };
+
+    let message_bytes = sign_details.message.as_bytes();
+    let signature = keypair.sign_message(message_bytes);
+    let public_key = keypair.pubkey().to_string();
+
+    let signature_base64 = base64::prelude::BASE64_STANDARD.encode(&signature.as_ref());
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "success": true,
+        "data": {
+            "signature": signature_base64,
+            "public_key": public_key,
+            "message": sign_details.message
         }
     }))
 }
