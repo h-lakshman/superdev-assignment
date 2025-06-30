@@ -105,7 +105,7 @@ async fn create_token(token_details: web::Json<CreateTokenBody>) -> impl Respond
         })
         .collect();
 
-    let instruction_data = base64::prelude::BASE64_STANDARD.encode(&instruction.data);
+    let instruction_data = BASE64_STANDARD.encode(&instruction.data);
 
     HttpResponse::Ok().json(serde_json::json!({
         "success": true,
@@ -184,7 +184,7 @@ async fn mint_to_token(mint_to_details: web::Json<MintTokenBody>) -> impl Respon
         })
         .collect();
 
-    let instruction_data = base64::prelude::BASE64_STANDARD.encode(&instruction.data);
+    let instruction_data = BASE64_STANDARD.encode(&instruction.data);
 
     HttpResponse::Ok().json(serde_json::json!({
         "success": true,
@@ -211,22 +211,13 @@ async fn sign_message(sign_details: web::Json<SignMessageBody>) -> impl Responde
         }));
     }
 
-    let keypair =
-        match std::panic::catch_unwind(|| Keypair::from_base58_string(&sign_details.secret)) {
-            Ok(kp) => kp,
-            Err(_) => {
-                return HttpResponse::BadRequest().json(serde_json::json!({
-                    "success": false,
-                    "error": "Invalid secret key format"
-                }));
-            }
-        };
+    let keypair = Keypair::from_base58_string(&sign_details.secret);
 
     let message_bytes = sign_details.message.as_bytes();
     let signature = keypair.sign_message(message_bytes);
     let public_key = keypair.pubkey().to_string();
 
-    let signature_base64 = base64::prelude::BASE64_STANDARD.encode(&signature.as_ref());
+    let signature_base64 = BASE64_STANDARD.encode(&signature.as_ref());
 
     HttpResponse::Ok().json(serde_json::json!({
         "success": true,
@@ -388,7 +379,6 @@ struct TokenAccountInfo {
 
 #[post("/send/token")]
 async fn send_token(transfer_details: web::Json<SendTokenBody>) -> impl Responder {
-    //
     if transfer_details.destination.is_empty()
         || transfer_details.mint.is_empty()
         || transfer_details.owner.is_empty()
