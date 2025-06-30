@@ -3,7 +3,11 @@ use std::str::FromStr;
 use actix_web::{App, HttpResponse, HttpServer, Responder, post, web};
 use base64::prelude::*;
 use serde::{Deserialize, Serialize};
-use solana_sdk::{pubkey::Pubkey, signature::Keypair, signer::Signer};
+use solana_sdk::{
+    pubkey::Pubkey,
+    signature::{Keypair, Signature},
+    signer::Signer,
+};
 use spl_token::{ID as TOKEN_PROGRAM_ID, instruction as token_instruction};
 
 #[actix_web::main]
@@ -20,6 +24,7 @@ async fn main() -> std::io::Result<()> {
             .service(create_token)
             .service(mint_to_token)
             .service(sign_message)
+            .service(verify_message)
     })
     .bind(("0.0.0.0", port))?
     .run()
@@ -224,6 +229,68 @@ async fn sign_message(sign_details: web::Json<SignMessageBody>) -> impl Responde
             "signature": signature_base64,
             "public_key": public_key,
             "message": sign_details.message
+        }
+    }))
+}
+
+#[derive(Deserialize)]
+struct VerifyMessageBody {
+    message: String,
+    signature: String,
+    pubkey: String,
+}
+
+#[post("/message/verify")]
+async fn verify_message(verify_details: web::Json<VerifyMessageBody>) -> impl Responder {
+    if verify_details.message.is_empty()
+        || verify_details.signature.is_empty()
+        || verify_details.pubkey.is_empty()
+    {
+        return HttpResponse::BadRequest().json(serde_json::json!({
+            "success": false,
+            "error": "Missing required fields"
+        }));
+    }
+
+    let pubkey = match Pubkey::from_str(&verify_details.pubkey) {
+        Ok(pk) => pk,
+        Err(_) => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "success": false,
+                "error": "Invalid public key format"
+            }));
+        }
+    };
+
+    let signature_bytes = match BASE64_STANDARD.decode(&verify_details.signature) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "success": false,
+                "error": "Invalid signature format"
+            }));
+        }
+    };
+
+    let signature = match Signature::try_from(signature_bytes.as_slice()) {
+        Ok(sig) => sig,
+        Err(_) => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "success": false,
+                "error": "Invalid signature length"
+            }));
+        }
+    };
+
+    let message_bytes = verify_details.message.as_bytes();
+    let is_valid = signature.verify(pubkey.as_ref(), message_bytes);
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "success": true,
+        "data": {
+            "valid": is_valid,
+            "message": verify_details.message,
+            "pubkey": verify_details.pubkey
         }
     }))
 }
