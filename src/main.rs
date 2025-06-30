@@ -7,7 +7,7 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::{Keypair, Signature},
     signer::Signer,
-    system_instruction, system_program,
+    system_instruction,
 };
 use spl_associated_token_account;
 use spl_token::{ID as TOKEN_PROGRAM_ID, instruction as token_instruction};
