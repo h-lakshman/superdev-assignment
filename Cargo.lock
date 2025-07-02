@@ -4129,6 +4129,7 @@ version = "0.1.0"
 dependencies = [
  "actix-web",
  "base64 0.22.1",
+ "bs58",
  "dotenv",
  "serde",
  "serde_json",

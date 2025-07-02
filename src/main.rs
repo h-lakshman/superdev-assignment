@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use actix_web::{App, HttpResponse, HttpServer, Responder, post, web};
 use base64::prelude::*;
+use bs58;
 use serde::{Deserialize, Serialize};
 use solana_sdk::{
     pubkey::Pubkey,
@@ -48,13 +49,12 @@ async fn generate_keypair() -> impl Responder {
         }
     }))
 }
-
 #[derive(Deserialize)]
 struct CreateTokenBody {
     #[serde(rename = "mintAuthority")]
-    mint_authority: String,
-    mint: String,
-    decimals: u8,
+    mint_authority: Option<String>,
+    mint: Option<String>,
+    decimals: Option<u8>,
 }
 
 #[derive(Serialize)]
@@ -66,7 +66,37 @@ struct AccountInfo {
 
 #[post("/token/create")]
 async fn create_token(token_details: web::Json<CreateTokenBody>) -> impl Responder {
-    let mint_authority = match Pubkey::from_str(&token_details.mint_authority) {
+    let mint_authority = match &token_details.mint_authority {
+        Some(authority) if !authority.is_empty() => authority,
+        _ => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "success": false,
+                "error": "Missing required fields"
+            }));
+        }
+    };
+
+    let mint = match &token_details.mint {
+        Some(mint_key) if !mint_key.is_empty() => mint_key,
+        _ => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "success": false,
+                "error": "Missing required fields"
+            }));
+        }
+    };
+
+    let decimals = match token_details.decimals {
+        Some(dec) if dec > 0 => dec,
+        _ => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "success": false,
+                "error": "Missing required fields"
+            }));
+        }
+    };
+
+    let mint_authority_pubkey = match Pubkey::from_str(mint_authority) {
         Ok(pubkey) => pubkey,
         Err(_) => {
             return HttpResponse::BadRequest().json(serde_json::json!({
@@ -76,7 +106,7 @@ async fn create_token(token_details: web::Json<CreateTokenBody>) -> impl Respond
         }
     };
 
-    let mint = match Pubkey::from_str(&token_details.mint) {
+    let mint_pubkey = match Pubkey::from_str(mint) {
         Ok(pubkey) => pubkey,
         Err(_) => {
             return HttpResponse::BadRequest().json(serde_json::json!({
@@ -88,13 +118,13 @@ async fn create_token(token_details: web::Json<CreateTokenBody>) -> impl Respond
 
     let instruction = token_instruction::initialize_mint(
         &TOKEN_PROGRAM_ID,
-        &mint,
-        &mint_authority,
+        &mint_pubkey,
+        &mint_authority_pubkey,
         None,
-        token_details.decimals,
+        decimals,
     )
     .unwrap();
-
+    println!("{:?}", instruction.accounts);
     let accounts: Vec<AccountInfo> = instruction
         .accounts
         .iter()
@@ -119,15 +149,54 @@ async fn create_token(token_details: web::Json<CreateTokenBody>) -> impl Respond
 
 #[derive(Deserialize)]
 struct MintTokenBody {
-    mint: String,
-    destination: String,
-    authority: String,
-    amount: u64,
+    mint: Option<String>,
+    destination: Option<String>,
+    authority: Option<String>,
+    amount: Option<u64>,
 }
 
 #[post("/token/mint")]
 async fn mint_to_token(mint_to_details: web::Json<MintTokenBody>) -> impl Responder {
-    let mint = match Pubkey::from_str(&mint_to_details.mint) {
+    let mint_authority = match &mint_to_details.authority {
+        Some(authority) if !authority.is_empty() => authority,
+        _ => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "success": false,
+                "error": "Missing required fields"
+            }));
+        }
+    };
+    let destination = match &mint_to_details.destination {
+        Some(destination) if !destination.is_empty() => destination,
+        _ => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "success": false,
+                "error": "Missing required fields"
+            }));
+        }
+    };
+
+    let amount = match mint_to_details.amount {
+        Some(amount) if amount > 0 => amount,
+        _ => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "success": false,
+                "error": "Missing required fields"
+            }));
+        }
+    };
+
+    let mint = match &mint_to_details.mint {
+        Some(mint) if !mint.is_empty() => mint,
+        _ => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "success": false,
+                "error": "Missing required fields"
+            }));
+        }
+    };
+
+    let mint = match Pubkey::from_str(mint) {
         Ok(pubkey) => pubkey,
         Err(_) => {
             return HttpResponse::BadRequest().json(serde_json::json!({
@@ -137,7 +206,7 @@ async fn mint_to_token(mint_to_details: web::Json<MintTokenBody>) -> impl Respon
         }
     };
 
-    let destination = match Pubkey::from_str(&mint_to_details.destination) {
+    let destination = match Pubkey::from_str(destination) {
         Ok(pubkey) => pubkey,
         Err(_) => {
             return HttpResponse::BadRequest().json(serde_json::json!({
@@ -147,7 +216,7 @@ async fn mint_to_token(mint_to_details: web::Json<MintTokenBody>) -> impl Respon
         }
     };
 
-    let authority = match Pubkey::from_str(&mint_to_details.authority) {
+    let authority = match Pubkey::from_str(mint_authority) {
         Ok(pubkey) => pubkey,
         Err(_) => {
             return HttpResponse::BadRequest().json(serde_json::json!({
@@ -157,20 +226,23 @@ async fn mint_to_token(mint_to_details: web::Json<MintTokenBody>) -> impl Respon
         }
     };
 
-    if mint_to_details.amount == 0 {
+    if amount == 0 {
         return HttpResponse::BadRequest().json(serde_json::json!({
             "success": false,
             "error": "Amount must be greater than 0"
         }));
     }
 
+    let destination_ata =
+        spl_associated_token_account::get_associated_token_address(&destination, &mint);
+
     let instruction = token_instruction::mint_to(
         &TOKEN_PROGRAM_ID,
         &mint,
-        &destination,
+        &destination_ata,
         &authority,
         &[],
-        mint_to_details.amount,
+        amount,
     )
     .unwrap();
 
@@ -211,19 +283,28 @@ async fn sign_message(sign_details: web::Json<SignMessageBody>) -> impl Responde
         }));
     }
 
-    let keypair = Keypair::from_base58_string(&sign_details.secret);
+    let keypair =
+        match std::panic::catch_unwind(|| Keypair::from_base58_string(&sign_details.secret)) {
+            Ok(kp) => kp,
+            Err(_) => {
+                return HttpResponse::BadRequest().json(serde_json::json!({
+                    "success": false,
+                    "error": "Invalid secret key format"
+                }));
+            }
+        };
 
     let message_bytes = sign_details.message.as_bytes();
     let signature = keypair.sign_message(message_bytes);
     let public_key = keypair.pubkey().to_string();
 
-    let signature_base64 = BASE64_STANDARD.encode(&signature.as_ref());
+    let signature_base58 = bs58::encode(&signature.as_ref()).into_string();
 
     HttpResponse::Ok().json(serde_json::json!({
         "success": true,
         "data": {
-            "signature": signature_base64,
-            "public_key": public_key,
+            "signature": signature_base58,
+            "pubkey": public_key,
             "message": sign_details.message
         }
     }))
@@ -258,7 +339,7 @@ async fn verify_message(verify_details: web::Json<VerifyMessageBody>) -> impl Re
         }
     };
 
-    let signature_bytes = match BASE64_STANDARD.decode(&verify_details.signature) {
+    let signature_bytes = match bs58::decode(&verify_details.signature).into_vec() {
         Ok(bytes) => bytes,
         Err(_) => {
             return HttpResponse::BadRequest().json(serde_json::json!({
@@ -310,7 +391,7 @@ async fn send_sol(transfer_details: web::Json<SendSolBody>) -> impl Responder {
     if transfer_details.lamports == 0 {
         return HttpResponse::BadRequest().json(serde_json::json!({
             "success": false,
-            "error": "Lamport amount must be greater than 0"
+            "error": "Amount must be greater than 0"
         }));
     }
 
@@ -350,7 +431,7 @@ async fn send_sol(transfer_details: web::Json<SendSolBody>) -> impl Responder {
         .map(|account| account.pubkey.to_string())
         .collect();
 
-    let instruction_data = BASE64_STANDARD.encode(&instruction.data);
+    let instruction_data = bs58::encode(&instruction.data).into_string();
 
     HttpResponse::Ok().json(serde_json::json!({
         "success": true,
@@ -364,10 +445,10 @@ async fn send_sol(transfer_details: web::Json<SendSolBody>) -> impl Responder {
 
 #[derive(Deserialize)]
 struct SendTokenBody {
-    destination: String,
-    mint: String,
-    owner: String,
-    amount: u64,
+    destination: Option<String>,
+    mint: Option<String>,
+    owner: Option<String>,
+    amount: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -379,24 +460,48 @@ struct TokenAccountInfo {
 
 #[post("/send/token")]
 async fn send_token(transfer_details: web::Json<SendTokenBody>) -> impl Responder {
-    if transfer_details.destination.is_empty()
-        || transfer_details.mint.is_empty()
-        || transfer_details.owner.is_empty()
-    {
-        return HttpResponse::BadRequest().json(serde_json::json!({
-            "success": false,
-            "error": "Missing required fields"
-        }));
-    }
+    // Check if required fields are missing or empty
+    let destination = match &transfer_details.destination {
+        Some(dest) if !dest.is_empty() => dest,
+        _ => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "success": false,
+                "error": "Missing required fields"
+            }));
+        }
+    };
 
-    if transfer_details.amount == 0 {
-        return HttpResponse::BadRequest().json(serde_json::json!({
-            "success": false,
-            "error": "Amount must be greater than 0"
-        }));
-    }
+    let mint = match &transfer_details.mint {
+        Some(mint_key) if !mint_key.is_empty() => mint_key,
+        _ => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "success": false,
+                "error": "Missing required fields"
+            }));
+        }
+    };
 
-    let destination_pubkey = match Pubkey::from_str(&transfer_details.destination) {
+    let owner = match &transfer_details.owner {
+        Some(owner_key) if !owner_key.is_empty() => owner_key,
+        _ => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "success": false,
+                "error": "Missing required fields"
+            }));
+        }
+    };
+
+    let amount = match transfer_details.amount {
+        Some(amt) if amt > 0 => amt,
+        _ => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "success": false,
+                "error": "Missing required fields"
+            }));
+        }
+    };
+
+    let destination_pubkey = match Pubkey::from_str(destination) {
         Ok(pk) => pk,
         Err(_) => {
             return HttpResponse::BadRequest().json(serde_json::json!({
@@ -406,7 +511,7 @@ async fn send_token(transfer_details: web::Json<SendTokenBody>) -> impl Responde
         }
     };
 
-    let mint_pubkey = match Pubkey::from_str(&transfer_details.mint) {
+    let mint_pubkey = match Pubkey::from_str(mint) {
         Ok(pk) => pk,
         Err(_) => {
             return HttpResponse::BadRequest().json(serde_json::json!({
@@ -416,7 +521,7 @@ async fn send_token(transfer_details: web::Json<SendTokenBody>) -> impl Responde
         }
     };
 
-    let owner_pubkey = match Pubkey::from_str(&transfer_details.owner) {
+    let owner_pubkey = match Pubkey::from_str(owner) {
         Ok(pk) => pk,
         Err(_) => {
             return HttpResponse::BadRequest().json(serde_json::json!({
@@ -429,13 +534,18 @@ async fn send_token(transfer_details: web::Json<SendTokenBody>) -> impl Responde
     let source_pubkey =
         spl_associated_token_account::get_associated_token_address(&owner_pubkey, &mint_pubkey);
 
+    let destination_ata = spl_associated_token_account::get_associated_token_address(
+        &destination_pubkey,
+        &mint_pubkey,
+    );
+
     let instruction = token_instruction::transfer(
         &TOKEN_PROGRAM_ID,
         &source_pubkey,
-        &destination_pubkey,
+        &destination_ata,
         &owner_pubkey,
         &[],
-        transfer_details.amount,
+        amount,
     )
     .unwrap();
 
@@ -448,7 +558,7 @@ async fn send_token(transfer_details: web::Json<SendTokenBody>) -> impl Responde
         })
         .collect();
 
-    let instruction_data = BASE64_STANDARD.encode(&instruction.data);
+    let instruction_data = bs58::encode(&instruction.data).into_string();
 
     HttpResponse::Ok().json(serde_json::json!({
         "success": true,
