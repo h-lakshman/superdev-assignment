@@ -67,31 +67,31 @@ struct AccountInfo {
 #[post("/token/create")]
 async fn create_token(token_details: web::Json<CreateTokenBody>) -> impl Responder {
     let mint_authority = match &token_details.mint_authority {
-        Some(authority) if !authority.is_empty() => authority,
+        Some(authority) => authority,
         _ => {
             return HttpResponse::BadRequest().json(serde_json::json!({
                 "success": false,
-                "error": "Missing required fields"
+                "error": "Missing required field: mintAuthority"
             }));
         }
     };
 
     let mint = match &token_details.mint {
-        Some(mint_key) if !mint_key.is_empty() => mint_key,
+        Some(mint_key) => mint_key,
         _ => {
             return HttpResponse::BadRequest().json(serde_json::json!({
                 "success": false,
-                "error": "Missing required fields"
+                "error": "Missing required field: mint"
             }));
         }
     };
 
     let decimals = match token_details.decimals {
-        Some(dec) if dec > 0 => dec,
+        Some(dec) => dec,
         _ => {
             return HttpResponse::BadRequest().json(serde_json::json!({
                 "success": false,
-                "error": "Missing required fields"
+                "error": "Missing required field: decimals"
             }));
         }
     };
@@ -124,7 +124,7 @@ async fn create_token(token_details: web::Json<CreateTokenBody>) -> impl Respond
         decimals,
     )
     .unwrap();
-    println!("{:?}", instruction.accounts);
+
     let accounts: Vec<AccountInfo> = instruction
         .accounts
         .iter()
@@ -135,7 +135,7 @@ async fn create_token(token_details: web::Json<CreateTokenBody>) -> impl Respond
         })
         .collect();
 
-    let instruction_data = BASE64_STANDARD.encode(&instruction.data);
+    let instruction_data = bs58::encode(&instruction.data).into_vec();
 
     HttpResponse::Ok().json(serde_json::json!({
         "success": true,
@@ -158,26 +158,26 @@ struct MintTokenBody {
 #[post("/token/mint")]
 async fn mint_to_token(mint_to_details: web::Json<MintTokenBody>) -> impl Responder {
     let mint_authority = match &mint_to_details.authority {
-        Some(authority) if !authority.is_empty() => authority,
+        Some(authority) => authority,
         _ => {
             return HttpResponse::BadRequest().json(serde_json::json!({
                 "success": false,
-                "error": "Missing required fields"
+                "error": "Missing required field: authority"
             }));
         }
     };
     let destination = match &mint_to_details.destination {
-        Some(destination) if !destination.is_empty() => destination,
+        Some(destination) => destination,
         _ => {
             return HttpResponse::BadRequest().json(serde_json::json!({
                 "success": false,
-                "error": "Missing required fields"
+                "error": "Missing required field: destination"
             }));
         }
     };
 
     let amount = match mint_to_details.amount {
-        Some(amount) if amount > 0 => amount,
+        Some(amount) => amount,
         _ => {
             return HttpResponse::BadRequest().json(serde_json::json!({
                 "success": false,
@@ -187,11 +187,11 @@ async fn mint_to_token(mint_to_details: web::Json<MintTokenBody>) -> impl Respon
     };
 
     let mint = match &mint_to_details.mint {
-        Some(mint) if !mint.is_empty() => mint,
+        Some(mint) => mint,
         _ => {
             return HttpResponse::BadRequest().json(serde_json::json!({
                 "success": false,
-                "error": "Missing required fields"
+                "error": "Missing required field: mint"
             }));
         }
     };
@@ -256,7 +256,7 @@ async fn mint_to_token(mint_to_details: web::Json<MintTokenBody>) -> impl Respon
         })
         .collect();
 
-    let instruction_data = BASE64_STANDARD.encode(&instruction.data);
+    let instruction_data = bs58::encode(&instruction.data).into_vec();
 
     HttpResponse::Ok().json(serde_json::json!({
         "success": true,
@@ -276,10 +276,10 @@ struct SignMessageBody {
 
 #[post("/message/sign")]
 async fn sign_message(sign_details: web::Json<SignMessageBody>) -> impl Responder {
-    if sign_details.message.is_empty() || sign_details.secret.is_empty() {
+    if sign_details.message.is_empty() {
         return HttpResponse::BadRequest().json(serde_json::json!({
             "success": false,
-            "error": "Missing required fields"
+            "error": "Message cannot be empty"
         }));
     }
 
@@ -319,13 +319,10 @@ struct VerifyMessageBody {
 
 #[post("/message/verify")]
 async fn verify_message(verify_details: web::Json<VerifyMessageBody>) -> impl Responder {
-    if verify_details.message.is_empty()
-        || verify_details.signature.is_empty()
-        || verify_details.pubkey.is_empty()
-    {
+    if verify_details.message.is_empty() {
         return HttpResponse::BadRequest().json(serde_json::json!({
             "success": false,
-            "error": "Missing required fields"
+            "error": "Message cannot be empty"
         }));
     }
 
@@ -381,12 +378,7 @@ struct SendSolBody {
 
 #[post("/send/sol")]
 async fn send_sol(transfer_details: web::Json<SendSolBody>) -> impl Responder {
-    if transfer_details.from.is_empty() || transfer_details.to.is_empty() {
-        return HttpResponse::BadRequest().json(serde_json::json!({
-            "success": false,
-            "error": "Missing required fields"
-        }));
-    }
+    // Empty string validation is handled by Pubkey::from_str() below
 
     if transfer_details.lamports == 0 {
         return HttpResponse::BadRequest().json(serde_json::json!({
@@ -460,33 +452,33 @@ struct TokenAccountInfo {
 
 #[post("/send/token")]
 async fn send_token(transfer_details: web::Json<SendTokenBody>) -> impl Responder {
-    // Check if required fields are missing or empty
+    // Check if required fields are missing
     let destination = match &transfer_details.destination {
-        Some(dest) if !dest.is_empty() => dest,
+        Some(dest) => dest,
         _ => {
             return HttpResponse::BadRequest().json(serde_json::json!({
                 "success": false,
-                "error": "Missing required fields"
+                "error": "Missing required field: destination"
             }));
         }
     };
 
     let mint = match &transfer_details.mint {
-        Some(mint_key) if !mint_key.is_empty() => mint_key,
+        Some(mint_key) => mint_key,
         _ => {
             return HttpResponse::BadRequest().json(serde_json::json!({
                 "success": false,
-                "error": "Missing required fields"
+                "error": "Missing required field: mint"
             }));
         }
     };
 
     let owner = match &transfer_details.owner {
-        Some(owner_key) if !owner_key.is_empty() => owner_key,
+        Some(owner_key) => owner_key,
         _ => {
             return HttpResponse::BadRequest().json(serde_json::json!({
                 "success": false,
-                "error": "Missing required fields"
+                "error": "Missing required field: owner"
             }));
         }
     };
